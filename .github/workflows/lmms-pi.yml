@@ -13,10 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Pobierz źródła LMMS
+      - name: Pobierz źródła LMMS (master = najnowsze)
         run: |
-          git clone --depth 1 --branch v1.3.0 https://github.com/LMMS/lmms.git src
-        # (możesz zmienić --branch na master lub inny tag)
+          git clone --depth 1 https://github.com/LMMS/lmms.git src
 
       - name: Zainstaluj zależności build
         run: |
@@ -30,19 +29,23 @@ jobs:
             libmp3lame-dev libpulse-dev libasound2-dev \
             libjack-jackd2-dev libfluidsynth-dev zlib1g-dev \
             libsqlite3-dev libarchive-dev liblilv-dev libsuil-dev \
-            libsndio-dev libgl-dev
+            libsndio-dev libgl-dev \
+            libfltk1.3-dev fluid libgig-dev libsdl2-dev \
+            libsoundio-dev portaudio19-dev libstk-dev libx11-dev
 
-      - name: Konfiguruj (flagi pod Cortex-A76 + OpenMP)
+      - name: Konfiguruj (TARGET_UARCH=Cortex-A76 + OpenMP)
         run: |
           cmake -S src -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -flto -pipe" \
-            -DCMAKE_CXX_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -flto -pipe" \
+            -DTARGET_UARCH=custom \
+            -DTARGET_UARCH_FLAGS="-mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto" \
+            -DCMAKE_C_FLAGS="-O3 -fopenmp -flto -pipe" \
+            -DCMAKE_CXX_FLAGS="-O3 -fopenmp -flto -pipe" \
             -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG" \
             -DWANT_QT6=ON \
             -DWANT_VST=OFF \
             -DWANT_ALSA=ON -DWANT_PULSEAUDIO=ON -DWANT_JACK=ON \
-            -DWANT_SNDFILE=ON \
+            -DWANT_SNDFILE=ON -DWANT_SF2=ON \
             -DCMAKE_INSTALL_PREFIX=/opt/lmms
 
       - name: Kompiluj (wielowątkowo)
