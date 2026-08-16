@@ -63,7 +63,7 @@ jobs:
             libsndio-dev libgl-dev \
             libfltk1.3-dev fluid libgig-dev libsdl2-dev \
             libsoundio-dev portaudio19-dev libstk-dev libx11-dev \
-            liblist-moreutils-perl
+            liblist-moreutils-perl libxml-parser-perl
 
       # Wszystka logika (flagi A76, JOBS, LTO, backend) jest w tym skrypcie.
       - name: Buduj LMMS (Cortex-A76, OpenMP, ochrona przed OOM)
