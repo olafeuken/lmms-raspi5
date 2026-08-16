@@ -1,21 +1,52 @@
-name: Build LMMS for Raspberry Pi 5 (arm64, Cortex-A76)
+name: Build LMMS (Raspberry Pi 5, Cortex-A76, arm64)
 
-# Darmowy runner ARM64 GitHub Actions. Buduje LMMS ze źródeł,
-# zoptymalizowany pod Cortex-A76 (Raspberry Pi 5) + OpenMP (wielowątkowość).
+# Buduje LMMS ze źródeł na DARMOWYM, NATYWNYM runnerze ARM64 GitHub Actions
+# (ubuntu-24.04-arm = 4 vCPU / 16 GB RAM). Zoptymalizowane pod Cortex-A76
+# (RPi5): -mcpu=cortex-a76, OpenMP (wielowątkowość wtyczek), opcjonalne LTO,
+# bezpieczne JOBS chroniące przed OOM, domyślnie backend PulseAudio (stabilny
+# przez PipeWire, bez znanej pętli 90% CPU z JACK).
+#
+# Uruchomienie: Actions -> Build LMMS (RPi5) -> Run workflow
 on:
-  workflow_dispatch:        # ręczne uruchomienie (Actions -> Run workflow)
+  workflow_dispatch:
+    inputs:
+      lmms_ref:
+        description: 'Gałąź/tag LMMS do zbudowania'
+        required: false
+        default: 'master'
+      audio_backend:
+        description: 'Backend audio (pulse = stabilny na Pi przez PipeWire)'
+        required: false
+        default: 'pulse'
+        type: choice
+        options:
+          - pulse
+          - jack
+          - both
+      enable_lto:
+        description: 'LTO (największy zysk CPU; wolniejsza kompilacja)'
+        required: false
+        default: true
+        type: boolean
+      min_plugins:
+        description: 'Tylko minimalny zestaw wtyczek (LMMS_MINIMAL)'
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [main]
+    # Uruchom przy utworzeniu taga v* → dodatkowo wgra plik na GitHub Release.
+    tags: ['v*']
+
+concurrency:
+  group: lmms-pi
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-arm   # darmowy arm64 runner (Ampere/N1, kompat. z A76)
+    runs-on: ubuntu-24.04-arm        # darmowy natywny arm64 runner (public repo)
     steps:
       - uses: actions/checkout@v4
-
-      - name: Pobierz źródła LMMS (master = najnowsze)
-        run: |
-          git clone --depth 1 https://github.com/LMMS/lmms.git src
 
       - name: Zainstaluj zależności build
         run: |
@@ -34,36 +65,70 @@ jobs:
             libsoundio-dev portaudio19-dev libstk-dev libx11-dev \
             liblist-moreutils-perl
 
-      - name: Konfiguruj (Cortex-A76 + OpenMP)
+      # Wszystka logika (flagi A76, JOBS, LTO, backend) jest w tym skrypcie.
+      - name: Buduj LMMS (Cortex-A76, OpenMP, ochrona przed OOM)
         run: |
-          cmake -S src -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DTARGET_UARCH=none \
-            -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -pipe" \
-            -DCMAKE_CXX_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -pipe" \
-            -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG" \
-            -DWANT_QT6=ON \
-            -DWANT_VST=OFF \
-            -DWANT_ALSA=ON -DWANT_PULSEAUDIO=ON -DWANT_JACK=ON \
-            -DWANT_SNDFILE=ON -DWANT_SF2=ON \
-            -DCMAKE_INSTALL_PREFIX=/opt/lmms
+          chmod +x scripts/build-lmms-pi.sh
+          LMMS_REF="${{ inputs.lmms_ref || 'master' }}" \
+          AUDIO_BACKEND="${{ inputs.audio_backend || 'pulse' }}" \
+          ENABLE_LTO="${{ inputs.enable_lto && '1' || '0' }}" \
+          MIN_PLUGINS="${{ inputs.min_plugins && '1' || '0' }}" \
+          INSTALL_DIR=/tmp/lmms-install \
+          ./scripts/build-lmms-pi.sh
 
-      - name: Kompiluj (wielowątkowo, bez LTO = bezpieczniej dla RAM)
-        run: cmake --build build -j"$(nproc)"
-
-      - name: Instaluj do katalogu staging
-        run: cmake --install build --prefix /tmp/lmms-install
-
-      - name: Pakuj wynik
+      - name: Przygotuj paczki (.deb + tar.gz + launcher)
         run: |
-          tar -C /tmp/lmms-install -czf lmms-pi5-arm64.tar.gz .
-          sha256sum lmms-pi5-arm64.tar.gz > lmms-pi5-arm64.tar.gz.sha256
-          ls -la lmms-pi5-arm64.tar.gz
+          set -euo pipefail
+          LMMS_VER="$(cat src/VERSION 2>/dev/null || grep -m1 -oP 'VERSION[^0-9]*\K[0-9.]+' src/CMakeLists.txt 2>/dev/null || echo 1.3.0-alpha)"
+          PKG="lmms-pi5-arm64"
+          STAGE="/tmp/pkg"
+          rm -rf "$STAGE" && mkdir -p "$STAGE/opt/lmms" "$STAGE/DEBIAN"
+
+          # Instalacja + launcher
+          cp -a /tmp/lmms-install/. "$STAGE/opt/lmms/"
+          install -Dm755 scripts/lmms-pi-launcher.sh "$STAGE/usr/local/bin/lmms-pi"
+          ln -sf lmms-pi "$STAGE/usr/local/bin/lmms"
+
+          # Metadane .deb
+          cat > "$STAGE/DEBIAN/control" <<EOF
+          Package: lmms-pi5-arm64
+          Version: $LMMS_VER
+          Section: sound
+          Priority: optional
+          Architecture: arm64
+          Maintainer: olafeuken <olafeuken@users.noreply.github.com>
+          Depends: libqt6core6, libqt6gui6, libqt6widgets6, libqt6svg6, libsndfile1,
+           libsamplerate0, libfftw3-single3, libasound2, libpulse0, zlib1g
+          Recommends: libfluidsynth3, libgig10
+          Description: LMMS zoptymalizowany dla Raspberry Pi 5 (Cortex-A76, OpenMP)
+           Native build LMMS tuned to -mcpu=cortex-a76 with OpenMP multithreading,
+           safe job scheduling (no OOM) and a runtime launcher (lmms-pi) that keeps
+           CPU load low and configures PipeWire latency.
+          EOF
+
+          # Buduj .deb i tar
+          dpkg-deb --build --root-owner-group "$STAGE" "${PKG}.deb"
+          tar -C /tmp/lmms-install -czf "${PKG}.tar.gz" .
+          sha256sum "${PKG}.deb" "${PKG}.tar.gz" > "${PKG}.sha256"
+          ls -la "${PKG}.deb" "${PKG}.tar.gz"
 
       - name: Wgraj jako artifact
         uses: actions/upload-artifact@v4
         with:
           name: lmms-pi5-arm64
           path: |
+            lmms-pi5-arm64.deb
             lmms-pi5-arm64.tar.gz
-            lmms-pi5-arm64.tar.gz.sha256
+            lmms-pi5-arm64.sha256
+
+      # Gdy wyzwolone przez tag v* → opublikuj pliki jako GitHub Release.
+      - name: Opublikuj GitHub Release (tylko dla tagów v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            lmms-pi5-arm64.deb lmms-pi5-arm64.tar.gz lmms-pi5-arm64.sha256 \
+            --title "LMMS dla Raspberry Pi 5 (${GITHUB_REF_NAME})" \
+            --notes "Natywny build aarch64, Cortex-A76, OpenMP, LTO. Instalacja: patrz README." \
+            --repo "${{ github.repository }}" || true
