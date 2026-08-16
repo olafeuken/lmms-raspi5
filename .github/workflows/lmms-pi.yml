@@ -33,14 +33,12 @@ jobs:
             libfltk1.3-dev fluid libgig-dev libsdl2-dev \
             libsoundio-dev portaudio19-dev libstk-dev libx11-dev
 
-      - name: Konfiguruj (TARGET_UARCH=Cortex-A76 + OpenMP)
+      - name: Konfiguruj (Cortex-A76 + OpenMP)
         run: |
           cmake -S src -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DTARGET_UARCH=custom \
-            -DTARGET_UARCH_FLAGS="-mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto" \
-            -DCMAKE_C_FLAGS="-O3 -fopenmp -flto -pipe" \
-            -DCMAKE_CXX_FLAGS="-O3 -fopenmp -flto -pipe" \
+            -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -pipe" \
+            -DCMAKE_CXX_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -pipe" \
             -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG" \
             -DWANT_QT6=ON \
             -DWANT_VST=OFF \
@@ -48,7 +46,7 @@ jobs:
             -DWANT_SNDFILE=ON -DWANT_SF2=ON \
             -DCMAKE_INSTALL_PREFIX=/opt/lmms
 
-      - name: Kompiluj (wielowątkowo)
+      - name: Kompiluj (wielowątkowo, bez LTO = bezpieczniej dla RAM)
         run: cmake --build build -j"$(nproc)"
 
       - name: Instaluj do katalogu staging
@@ -56,7 +54,7 @@ jobs:
 
       - name: Pakuj wynik
         run: |
-          tar -C /tmp -czf lmms-pi5-arm64.tar.gz lmms-install
+          tar -C /tmp/lmms-install -czf lmms-pi5-arm64.tar.gz .
           sha256sum lmms-pi5-arm64.tar.gz > lmms-pi5-arm64.tar.gz.sha256
           ls -la lmms-pi5-arm64.tar.gz
 
