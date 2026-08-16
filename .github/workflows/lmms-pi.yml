@@ -1,0 +1,66 @@
+name: Build LMMS for Raspberry Pi 5 (arm64, Cortex-A76)
+
+# Darmowy runner ARM64 GitHub Actions. Buduje LMMS ze źródeł,
+# zoptymalizowany pod Cortex-A76 (Raspberry Pi 5) + OpenMP (wielowątkowość).
+on:
+  workflow_dispatch:        # ręczne uruchomienie (Actions -> Run workflow)
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # darmowy arm64 runner (Ampere/N1, kompat. z A76)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pobierz źródła LMMS
+        run: |
+          git clone --depth 1 --branch v1.3.0 https://github.com/LMMS/lmms.git src
+        # (możesz zmienić --branch na master lub inny tag)
+
+      - name: Zainstaluj zależności build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-tools-dev \
+            qt6-tools-dev-tools qt6-svg-dev \
+            libsndfile1-dev libsamplerate0-dev \
+            libfftw3-dev libflac-dev libogg-dev libvorbis-dev \
+            libmp3lame-dev libpulse-dev libasound2-dev \
+            libjack-jackd2-dev libfluidsynth-dev zlib1g-dev \
+            libsqlite3-dev libarchive-dev liblilv-dev libsuil-dev \
+            libsndio-dev libgl-dev
+
+      - name: Konfiguruj (flagi pod Cortex-A76 + OpenMP)
+        run: |
+          cmake -S src -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -flto -pipe" \
+            -DCMAKE_CXX_FLAGS="-O3 -mcpu=cortex-a76 -march=armv8.2-a+dotprod+crypto -fopenmp -flto -pipe" \
+            -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG" \
+            -DWANT_QT6=ON \
+            -DWANT_VST=OFF \
+            -DWANT_ALSA=ON -DWANT_PULSEAUDIO=ON -DWANT_JACK=ON \
+            -DWANT_SNDFILE=ON \
+            -DCMAKE_INSTALL_PREFIX=/opt/lmms
+
+      - name: Kompiluj (wielowątkowo)
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Instaluj do katalogu staging
+        run: cmake --install build --prefix /tmp/lmms-install
+
+      - name: Pakuj wynik
+        run: |
+          tar -C /tmp -czf lmms-pi5-arm64.tar.gz lmms-install
+          sha256sum lmms-pi5-arm64.tar.gz > lmms-pi5-arm64.tar.gz.sha256
+          ls -la lmms-pi5-arm64.tar.gz
+
+      - name: Wgraj jako artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmms-pi5-arm64
+          path: |
+            lmms-pi5-arm64.tar.gz
+            lmms-pi5-arm64.tar.gz.sha256
